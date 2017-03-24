@@ -1,0 +1,853 @@
+diff --git a/arch/x86/include/uapi/asm/vmx.h b/arch/x86/include/uapi/asm/vmx.h
+index 5b15d94..f31237a 100644
+--- a/arch/x86/include/uapi/asm/vmx.h
++++ b/arch/x86/include/uapi/asm/vmx.h
+@@ -79,6 +79,7 @@
+ #define EXIT_REASON_XSAVES              63
+ #define EXIT_REASON_XRSTORS             64
+ #define EXIT_REASON_PCOMMIT             65
++#define EXIT_REASON_MAX									66
+ 
+ #define VMX_EXIT_REASONS \
+ 	{ EXIT_REASON_EXCEPTION_NMI,         "EXCEPTION_NMI" }, \
+diff --git a/arch/x86/kvm/module/Makefile b/arch/x86/kvm/module/Makefile
+new file mode 100644
+index 0000000..495f0ec
+--- /dev/null
++++ b/arch/x86/kvm/module/Makefile
+@@ -0,0 +1,7 @@
++obj-m += get_statistics.o
++
++all:
++	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
++
++clean:
++	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+diff --git a/arch/x86/kvm/module/get_statistics.c b/arch/x86/kvm/module/get_statistics.c
+new file mode 100644
+index 0000000..7db7125
+--- /dev/null
++++ b/arch/x86/kvm/module/get_statistics.c
+@@ -0,0 +1,356 @@
++#define MODULE
++#define LINUX
++#define __KERNEL__
++
++#include <linux/module.h>	/* Needed by all modules */
++#include <linux/kernel.h>	/* Needed for KERN_INFO */
++#include <linux/time.h>
++
++#define MAX_CPU 128
++
++#define EXIT_REASON_EXCEPTION_NMI       0
++#define EXIT_REASON_EXTERNAL_INTERRUPT  1
++#define EXIT_REASON_TRIPLE_FAULT        2
++#define EXIT_REASON_PENDING_INTERRUPT   7
++#define EXIT_REASON_NMI_WINDOW          8
++#define EXIT_REASON_TASK_SWITCH         9
++#define EXIT_REASON_CPUID               10
++#define EXIT_REASON_HLT                 12
++#define EXIT_REASON_INVD                13
++#define EXIT_REASON_INVLPG              14
++#define EXIT_REASON_RDPMC               15
++#define EXIT_REASON_RDTSC               16
++#define EXIT_REASON_VMCALL              18
++#define EXIT_REASON_VMCLEAR             19
++#define EXIT_REASON_VMLAUNCH            20
++#define EXIT_REASON_VMPTRLD             21
++#define EXIT_REASON_VMPTRST             22
++#define EXIT_REASON_VMREAD              23
++#define EXIT_REASON_VMRESUME            24
++#define EXIT_REASON_VMWRITE             25
++#define EXIT_REASON_VMOFF               26
++#define EXIT_REASON_VMON                27
++#define EXIT_REASON_CR_ACCESS           28
++#define EXIT_REASON_DR_ACCESS           29
++#define EXIT_REASON_IO_INSTRUCTION      30
++#define EXIT_REASON_MSR_READ            31
++#define EXIT_REASON_MSR_WRITE           32
++#define EXIT_REASON_INVALID_STATE       33
++#define EXIT_REASON_MSR_LOAD_FAIL       34
++#define EXIT_REASON_MWAIT_INSTRUCTION   36
++#define EXIT_REASON_MONITOR_TRAP_FLAG   37
++#define EXIT_REASON_MONITOR_INSTRUCTION 39
++#define EXIT_REASON_PAUSE_INSTRUCTION   40
++#define EXIT_REASON_MCE_DURING_VMENTRY  41
++#define EXIT_REASON_TPR_BELOW_THRESHOLD 43
++#define EXIT_REASON_APIC_ACCESS         44
++#define EXIT_REASON_EOI_INDUCED         45
++#define EXIT_REASON_EPT_VIOLATION       48
++#define EXIT_REASON_EPT_MISCONFIG       49
++#define EXIT_REASON_INVEPT              50
++#define EXIT_REASON_RDTSCP              51
++#define EXIT_REASON_PREEMPTION_TIMER    52
++#define EXIT_REASON_INVVPID             53
++#define EXIT_REASON_WBINVD              54
++#define EXIT_REASON_XSETBV              55
++#define EXIT_REASON_APIC_WRITE          56
++#define EXIT_REASON_INVPCID             58
++#define EXIT_REASON_PML_FULL            62
++#define EXIT_REASON_XSAVES              63
++#define EXIT_REASON_XRSTORS             64
++#define EXIT_REASON_PCOMMIT             65
++#define EXIT_REASON_MAX									66
++
++#define EVENT_MAX                       3
++
++extern unsigned int vmx_exit_counter[MAX_CPU][EXIT_REASON_MAX];
++extern unsigned int vmx_event[MAX_CPU][EVENT_MAX];
++extern struct timespec vmx_exit_start_time;
++unsigned int vmx_exits[EXIT_REASON_MAX];
++int total_cpu;
++int total_num_exits = 51;
++
++int init_module(void);
++void cleanup_module(void);
++
++unsigned int get_total_exits_per_id(int exit_id);
++unsigned int get_total_events_per_cpu_id(int cpu_id);
++unsigned int get_total_exits_per_cpu_id(int cpu_id);
++
++void print_statistics(void);
++void print_exit_statistics(void);
++void print_events_per_cpu(void);
++void print_exits_per_cpu_per_second(void);
++
++int init_module(void)
++{
++  //printk("init_module");
++  print_statistics();
++  return 0;
++}
++
++void print_statistics(void)
++{
++//  printk("vmx_exit_start_time.tv_sec: %ld\n",vmx_exit_start_time.tv_sec);
++
++  // print individual events
++  printk("\n*************************************\n");
++  printk("CMPE283 bonus assignment\n");
++  printk("*************************************\n");
++
++  // print individual events
++  printk("\n*************************************\n");
++  printk("1. Total number of exits of each type\n");
++  print_exit_statistics();
++  printk("*************************************\n");
++
++  printk("\n*************************************\n");
++  printk("2. Total number of event per CPU\n");
++  //printk("Number of CPU: %d\n", total_cpu);
++  print_events_per_cpu();
++  printk("*************************************\n");
++
++  printk("\n*************************************\n");
++  printk("3. Average number of exits per second, per CPU \n");
++  print_exits_per_cpu_per_second();
++  printk("*************************************\n");
++
++}
++
++void print_exits_per_cpu_per_second(void)
++{
++  unsigned int c=0;
++  struct timespec current_time;
++
++  printk("Number of types of exits: %d\n", total_num_exits);
++  for(c = 0; c < total_cpu; c++)
++  {
++    int time_s = 0;
++    getnstimeofday(&current_time);
++    time_s = current_time.tv_sec - vmx_exit_start_time.tv_sec;
++    printk("Total exits per CPU[%d] per second : %d\n", c, get_total_exits_per_cpu_id(c)/time_s);
++  }
++
++  for(c = 0; c < total_cpu; c++)
++  {
++    int time_s = 0;
++    getnstimeofday(&current_time);
++    time_s = current_time.tv_sec - vmx_exit_start_time.tv_sec;
++    printk("Avg exits per CPU[%d] per second : %d\n", c, get_total_exits_per_cpu_id(c)/(time_s*total_num_exits));
++  }
++}
++
++void print_events_per_cpu(void)
++{
++  unsigned int c=0;
++  for(c = 0; c < total_cpu; c++)
++  {
++    printk("Events per CPU[%d] : %d\n", c, get_total_events_per_cpu_id(c));
++  }
++}
++
++void print_exit_statistics(void)
++{
++  vmx_exits[EXIT_REASON_EXCEPTION_NMI] = get_total_exits_per_id(EXIT_REASON_EXCEPTION_NMI);
++  printk("EXIT_REASON_EXCEPTION_NMI: %d\n", vmx_exits[EXIT_REASON_EXCEPTION_NMI]);
++
++  vmx_exits[EXIT_REASON_EXTERNAL_INTERRUPT] = get_total_exits_per_id(EXIT_REASON_EXTERNAL_INTERRUPT);
++  printk("EXIT_REASON_EXTERNAL_INTERRUPT: %d\n", vmx_exits[EXIT_REASON_EXTERNAL_INTERRUPT]);
++
++  vmx_exits[EXIT_REASON_TRIPLE_FAULT] = get_total_exits_per_id(EXIT_REASON_TRIPLE_FAULT);
++  printk("EXIT_REASON_TRIPLE_FAULT: %d\n", vmx_exits[EXIT_REASON_TRIPLE_FAULT]);
++
++  vmx_exits[EXIT_REASON_PENDING_INTERRUPT] = get_total_exits_per_id(EXIT_REASON_PENDING_INTERRUPT);
++  printk("EXIT_REASON_PENDING_INTERRUPT: %d\n", vmx_exits[EXIT_REASON_PENDING_INTERRUPT]);
++
++  vmx_exits[EXIT_REASON_NMI_WINDOW] = get_total_exits_per_id(EXIT_REASON_NMI_WINDOW);
++  printk("EXIT_REASON_NMI_WINDOW: %d\n", vmx_exits[EXIT_REASON_NMI_WINDOW]);
++
++  vmx_exits[EXIT_REASON_TASK_SWITCH] = get_total_exits_per_id(EXIT_REASON_TASK_SWITCH);
++  printk("EXIT_REASON_TASK_SWITCH: %d\n", vmx_exits[EXIT_REASON_TASK_SWITCH]);
++
++  vmx_exits[EXIT_REASON_CPUID] = get_total_exits_per_id(EXIT_REASON_CPUID);
++  printk("EXIT_REASON_CPUID: %d\n", vmx_exits[EXIT_REASON_CPUID]);
++
++  vmx_exits[EXIT_REASON_HLT] = get_total_exits_per_id(EXIT_REASON_HLT);
++  printk("EXIT_REASON_HLT: %d\n", vmx_exits[EXIT_REASON_HLT]);
++
++  vmx_exits[EXIT_REASON_INVD ] = get_total_exits_per_id(EXIT_REASON_INVD );
++  printk("EXIT_REASON_INVD : %d\n", vmx_exits[EXIT_REASON_INVD ]);
++
++  vmx_exits[EXIT_REASON_INVLPG  ] = get_total_exits_per_id(EXIT_REASON_INVLPG  );
++  printk("EXIT_REASON_INVLPG  : %d\n", vmx_exits[EXIT_REASON_INVLPG  ]);
++
++  vmx_exits[EXIT_REASON_RDPMC ] = get_total_exits_per_id(EXIT_REASON_RDPMC );
++  printk("EXIT_REASON_RDPMC : %d\n", vmx_exits[EXIT_REASON_RDPMC ]);
++
++  vmx_exits[EXIT_REASON_RDTSC ] = get_total_exits_per_id(EXIT_REASON_RDTSC );
++  printk("EXIT_REASON_RDTSC : %d\n", vmx_exits[EXIT_REASON_RDTSC ]);
++
++  vmx_exits[EXIT_REASON_VMCALL] = get_total_exits_per_id(EXIT_REASON_VMCALL);
++  printk("EXIT_REASON_VMCALL: %d\n", vmx_exits[EXIT_REASON_VMCALL]);
++
++  vmx_exits[EXIT_REASON_VMCLEAR] = get_total_exits_per_id(EXIT_REASON_VMCLEAR);
++  printk("EXIT_REASON_VMCLEAR: %d\n", vmx_exits[EXIT_REASON_VMCLEAR]);
++
++  vmx_exits[EXIT_REASON_VMLAUNCH] = get_total_exits_per_id(EXIT_REASON_VMLAUNCH);
++  printk("EXIT_REASON_VMLAUNCH: %d\n", vmx_exits[EXIT_REASON_VMLAUNCH]);
++
++  vmx_exits[EXIT_REASON_VMPTRLD] = get_total_exits_per_id(EXIT_REASON_VMPTRLD);
++  printk("EXIT_REASON_VMPTRLD: %d\n", vmx_exits[EXIT_REASON_VMPTRLD]);
++
++  vmx_exits[EXIT_REASON_VMPTRST] = get_total_exits_per_id(EXIT_REASON_VMPTRST);
++  printk("EXIT_REASON_VMPTRST: %d\n", vmx_exits[EXIT_REASON_VMPTRST]);
++
++  vmx_exits[EXIT_REASON_VMREAD] = get_total_exits_per_id(EXIT_REASON_VMREAD);
++  printk("EXIT_REASON_VMREAD: %d\n", vmx_exits[EXIT_REASON_VMREAD]);
++
++  vmx_exits[EXIT_REASON_VMRESUME] = get_total_exits_per_id(EXIT_REASON_VMRESUME);
++  printk("EXIT_REASON_VMRESUME: %d\n", vmx_exits[EXIT_REASON_VMRESUME]);
++
++  vmx_exits[EXIT_REASON_VMWRITE] = get_total_exits_per_id(EXIT_REASON_VMWRITE);
++  printk("EXIT_REASON_VMWRITE: %d\n", vmx_exits[EXIT_REASON_VMWRITE]);
++
++  vmx_exits[EXIT_REASON_VMOFF] = get_total_exits_per_id(EXIT_REASON_VMOFF);
++  printk("EXIT_REASON_VMOFF: %d\n", vmx_exits[EXIT_REASON_VMOFF]);
++
++  vmx_exits[EXIT_REASON_VMON] = get_total_exits_per_id(EXIT_REASON_VMON);
++  printk("EXIT_REASON_VMON: %d\n", vmx_exits[EXIT_REASON_VMON]);
++
++  vmx_exits[EXIT_REASON_CR_ACCESS] = get_total_exits_per_id(EXIT_REASON_CR_ACCESS);
++  printk("EXIT_REASON_CR_ACCESS: %d\n", vmx_exits[EXIT_REASON_CR_ACCESS]);
++
++  vmx_exits[EXIT_REASON_DR_ACCESS] = get_total_exits_per_id(EXIT_REASON_DR_ACCESS);
++  printk("EXIT_REASON_DR_ACCESS: %d\n", vmx_exits[EXIT_REASON_DR_ACCESS]);
++
++  vmx_exits[EXIT_REASON_IO_INSTRUCTION] = get_total_exits_per_id(EXIT_REASON_IO_INSTRUCTION);
++  printk("EXIT_REASON_IO_INSTRUCTION: %d\n", vmx_exits[EXIT_REASON_IO_INSTRUCTION]);
++
++  vmx_exits[EXIT_REASON_MSR_READ] = get_total_exits_per_id(EXIT_REASON_MSR_READ);
++  printk("EXIT_REASON_MSR_READ: %d\n", vmx_exits[EXIT_REASON_MSR_READ]);
++
++  vmx_exits[EXIT_REASON_MSR_WRITE] = get_total_exits_per_id(EXIT_REASON_MSR_WRITE);
++  printk("EXIT_REASON_MSR_WRITE: %d\n", vmx_exits[EXIT_REASON_MSR_WRITE]);
++
++  vmx_exits[EXIT_REASON_INVALID_STATE] = get_total_exits_per_id(EXIT_REASON_INVALID_STATE);
++  printk("EXIT_REASON_INVALID_STATE: %d\n", vmx_exits[EXIT_REASON_INVALID_STATE]);
++
++  vmx_exits[EXIT_REASON_MSR_LOAD_FAIL] = get_total_exits_per_id(EXIT_REASON_MSR_LOAD_FAIL);
++  printk("EXIT_REASON_MSR_LOAD_FAIL: %d\n", vmx_exits[EXIT_REASON_MSR_LOAD_FAIL]);
++
++  vmx_exits[EXIT_REASON_MWAIT_INSTRUCTION] = get_total_exits_per_id(EXIT_REASON_MWAIT_INSTRUCTION);
++  printk("EXIT_REASON_MWAIT_INSTRUCTION: %d\n", vmx_exits[EXIT_REASON_MWAIT_INSTRUCTION]);
++
++  vmx_exits[EXIT_REASON_MONITOR_TRAP_FLAG] = get_total_exits_per_id(EXIT_REASON_MONITOR_TRAP_FLAG);
++  printk("EXIT_REASON_MONITOR_TRAP_FLAG: %d\n", vmx_exits[EXIT_REASON_MONITOR_TRAP_FLAG]);
++
++  vmx_exits[EXIT_REASON_MONITOR_INSTRUCTION] = get_total_exits_per_id(EXIT_REASON_MONITOR_INSTRUCTION);
++  printk("EXIT_REASON_MONITOR_INSTRUCTION: %d\n", vmx_exits[EXIT_REASON_MONITOR_INSTRUCTION]);
++
++  vmx_exits[EXIT_REASON_PAUSE_INSTRUCTION] = get_total_exits_per_id(EXIT_REASON_PAUSE_INSTRUCTION);
++  printk("EXIT_REASON_PAUSE_INSTRUCTION: %d\n", vmx_exits[EXIT_REASON_PAUSE_INSTRUCTION]);
++
++  vmx_exits[EXIT_REASON_MCE_DURING_VMENTRY] = get_total_exits_per_id(EXIT_REASON_MCE_DURING_VMENTRY);
++  printk("EXIT_REASON_MCE_DURING_VMENTRY: %d\n", vmx_exits[EXIT_REASON_MCE_DURING_VMENTRY]);
++
++  vmx_exits[EXIT_REASON_TPR_BELOW_THRESHOLD] = get_total_exits_per_id(EXIT_REASON_TPR_BELOW_THRESHOLD);
++  printk("EXIT_REASON_TPR_BELOW_THRESHOLD: %d\n", vmx_exits[EXIT_REASON_TPR_BELOW_THRESHOLD]);
++
++  vmx_exits[EXIT_REASON_APIC_ACCESS ] = get_total_exits_per_id(EXIT_REASON_APIC_ACCESS );
++  printk("EXIT_REASON_APIC_ACCESS : %d\n", vmx_exits[EXIT_REASON_APIC_ACCESS ]);
++
++  vmx_exits[EXIT_REASON_EOI_INDUCED] = get_total_exits_per_id(EXIT_REASON_EOI_INDUCED);
++  printk("EXIT_REASON_EOI_INDUCED: %d\n", vmx_exits[EXIT_REASON_EOI_INDUCED]);
++
++  vmx_exits[EXIT_REASON_EPT_VIOLATION] = get_total_exits_per_id(EXIT_REASON_EPT_VIOLATION);
++  printk("EXIT_REASON_EPT_VIOLATION: %d\n", vmx_exits[EXIT_REASON_EPT_VIOLATION]);
++
++  vmx_exits[EXIT_REASON_EPT_MISCONFIG] = get_total_exits_per_id(EXIT_REASON_EPT_MISCONFIG);
++  printk("EXIT_REASON_EPT_MISCONFIG: %d\n", vmx_exits[EXIT_REASON_EPT_MISCONFIG]);
++
++  vmx_exits[EXIT_REASON_INVEPT] = get_total_exits_per_id(EXIT_REASON_INVEPT);
++  printk("EXIT_REASON_INVEPT: %d\n", vmx_exits[EXIT_REASON_INVEPT]);
++
++  vmx_exits[EXIT_REASON_RDTSCP] = get_total_exits_per_id(EXIT_REASON_RDTSCP);
++  printk("EXIT_REASON_RDTSCP: %d\n", vmx_exits[EXIT_REASON_RDTSCP]);
++
++  vmx_exits[EXIT_REASON_PREEMPTION_TIMER] = get_total_exits_per_id(EXIT_REASON_PREEMPTION_TIMER);
++  printk("EXIT_REASON_PREEMPTION_TIMER: %d\n", vmx_exits[EXIT_REASON_PREEMPTION_TIMER]);
++
++  vmx_exits[EXIT_REASON_INVVPID] = get_total_exits_per_id(EXIT_REASON_INVVPID);
++  printk("EXIT_REASON_INVVPID: %d\n", vmx_exits[EXIT_REASON_INVVPID]);
++
++  vmx_exits[EXIT_REASON_WBINVD] = get_total_exits_per_id(EXIT_REASON_WBINVD);
++  printk("EXIT_REASON_WBINVD: %d\n", vmx_exits[EXIT_REASON_WBINVD]);
++
++  vmx_exits[EXIT_REASON_XSETBV] = get_total_exits_per_id(EXIT_REASON_XSETBV);
++  printk("EXIT_REASON_XSETBV: %d\n", vmx_exits[EXIT_REASON_XSETBV]);
++
++  vmx_exits[EXIT_REASON_APIC_WRITE] = get_total_exits_per_id(EXIT_REASON_APIC_WRITE);
++  printk("EXIT_REASON_APIC_WRITE: %d\n", vmx_exits[EXIT_REASON_APIC_WRITE]);
++
++  vmx_exits[EXIT_REASON_INVPCID] = get_total_exits_per_id(EXIT_REASON_INVPCID);
++  printk("EXIT_REASON_INVPCID: %d\n", vmx_exits[EXIT_REASON_INVPCID]);
++
++  vmx_exits[EXIT_REASON_PML_FULL] = get_total_exits_per_id(EXIT_REASON_PML_FULL);
++  printk("EXIT_REASON_PML_FULL: %d\n", vmx_exits[EXIT_REASON_PML_FULL]);
++
++  vmx_exits[EXIT_REASON_XSAVES] = get_total_exits_per_id(EXIT_REASON_XSAVES);
++  printk("EXIT_REASON_XSAVES: %d\n", vmx_exits[EXIT_REASON_XSAVES]);
++
++  vmx_exits[EXIT_REASON_XRSTORS] = get_total_exits_per_id(EXIT_REASON_XRSTORS);
++  printk("EXIT_REASON_XRSTORS: %d\n", vmx_exits[EXIT_REASON_XRSTORS]);
++
++  vmx_exits[EXIT_REASON_PCOMMIT] = get_total_exits_per_id(EXIT_REASON_PCOMMIT);
++  printk("EXIT_REASON_PCOMMIT: %d\n", vmx_exits[EXIT_REASON_PCOMMIT]);
++}
++
++unsigned int get_total_exits_per_id(int exit_id)
++{
++  unsigned int total = 0, c = 0, tmp_total_cpu = 0;
++  for (c = 0; c < MAX_CPU; c++)
++  {
++    //printk("%d\n", vmx_exit_counter[c][event_id]);
++    total += vmx_exit_counter[c][exit_id];
++    if(vmx_exit_counter[c][exit_id] > 0)
++    {
++      tmp_total_cpu += 1;
++    }
++  }
++
++  if(tmp_total_cpu > total_cpu)
++  {
++    total_cpu = tmp_total_cpu;
++  }
++
++  return total;
++}
++
++unsigned int get_total_events_per_cpu_id(int cpu_id)
++{
++  unsigned int total = 0, e = 0;
++  for (e = 0; e < EVENT_MAX; e++)
++  {
++    total += vmx_event[cpu_id][e];
++  }
++
++  return total;
++}
++
++unsigned int get_total_exits_per_cpu_id(int cpu_id)
++{
++  unsigned int total = 0, e = 0;
++  for (e = 0; e < EXIT_REASON_MAX; e++)
++  {
++    total += vmx_exit_counter[cpu_id][e];
++  }
++
++  return total;
++}
++
++void cleanup_module(void)
++{
++  //printk(KERN_ALERT "cleanup_module");
++}
++
++MODULE_LICENSE("GPL");
+diff --git a/arch/x86/kvm/module/get_statistics.sh b/arch/x86/kvm/module/get_statistics.sh
+new file mode 100755
+index 0000000..e032ca9
+--- /dev/null
++++ b/arch/x86/kvm/module/get_statistics.sh
+@@ -0,0 +1,5 @@
++#!/bin/sh
++echo 'inserting module to get statistics'
++sudo insmod get_statistics.ko
++sudo rmmod get_statistics.ko
++echo 'removed module'
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index 7b060bf..0a14773 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -51,6 +51,24 @@
+ 
+ #include "trace.h"
+ #include "pmu.h"
++#include <linux/time.h>
++
++#define MAX_CPU 128
++
++#define EVENT_IRQ 0
++#define EVENT_NMI 1
++#define EVENT_PFD 2
++#define EVENT_MAX 3
++
++struct timespec vmx_exit_start_time;
++unsigned int vmx_exit_counter[MAX_CPU][EXIT_REASON_MAX];
++unsigned int vmx_event[MAX_CPU][EVENT_MAX];
++
++void vmx_exit_init_start_time(void) {
++    if(vmx_exit_start_time.tv_sec == 0) {
++        getnstimeofday(&vmx_exit_start_time);
++    }
++}
+ 
+ #define __ex(x) __kvm_handle_fault_on_reboot(x)
+ #define __ex_clear(x, reg) \
+@@ -5039,6 +5057,7 @@ static void vmx_inject_irq(struct kvm_vcpu *vcpu)
+ 
+ 	trace_kvm_inj_virq(irq);
+ 
++  vmx_event[vcpu->cpu][EVENT_IRQ] += 1;
+ 	++vcpu->stat.irq_injections;
+ 	if (vmx->rmode.vm86_active) {
+ 		int inc_eip = 0;
+@@ -5078,6 +5097,7 @@ static void vmx_inject_nmi(struct kvm_vcpu *vcpu)
+ 		vmx->vnmi_blocked_time = 0;
+ 	}
+ 
++	vmx_event[vcpu->cpu][EVENT_NMI] += 1;
+ 	++vcpu->stat.nmi_injections;
+ 	vmx->nmi_known_unmasked = false;
+ 	if (vmx->rmode.vm86_active) {
+@@ -5237,6 +5257,8 @@ static int handle_machine_check(struct kvm_vcpu *vcpu)
+ 
+ static int handle_exception(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_EXCEPTION_NMI] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	struct kvm_run *kvm_run = vcpu->run;
+ 	u32 intr_info, ex_no, error_code;
+@@ -5348,18 +5370,24 @@ static int handle_exception(struct kvm_vcpu *vcpu)
+ 
+ static int handle_external_interrupt(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_EXTERNAL_INTERRUPT] += 1;
+ 	++vcpu->stat.irq_exits;
+ 	return 1;
+ }
+ 
+ static int handle_triple_fault(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_TRIPLE_FAULT] += 1;
+ 	vcpu->run->exit_reason = KVM_EXIT_SHUTDOWN;
+ 	return 0;
+ }
+ 
+ static int handle_io(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_IO_INSTRUCTION] += 1;
+ 	unsigned long exit_qualification;
+ 	int size, in, string;
+ 	unsigned port;
+@@ -5471,6 +5499,8 @@ static void handle_clts(struct kvm_vcpu *vcpu)
+ 
+ static int handle_cr(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_CR_ACCESS] += 1;
+ 	unsigned long exit_qualification, val;
+ 	int cr;
+ 	int reg;
+@@ -5550,6 +5580,8 @@ static int handle_cr(struct kvm_vcpu *vcpu)
+ 
+ static int handle_dr(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_DR_ACCESS] += 1;
+ 	unsigned long exit_qualification;
+ 	int dr, dr7, reg;
+ 
+@@ -5650,12 +5682,16 @@ static void vmx_set_dr7(struct kvm_vcpu *vcpu, unsigned long val)
+ 
+ static int handle_cpuid(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_CPUID] += 1;
+ 	kvm_emulate_cpuid(vcpu);
+ 	return 1;
+ }
+ 
+ static int handle_rdmsr(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_MSR_READ] += 1;
+ 	u32 ecx = vcpu->arch.regs[VCPU_REGS_RCX];
+ 	struct msr_data msr_info;
+ 
+@@ -5678,6 +5714,8 @@ static int handle_rdmsr(struct kvm_vcpu *vcpu)
+ 
+ static int handle_wrmsr(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_MSR_WRITE] += 1;
+ 	struct msr_data msr;
+ 	u32 ecx = vcpu->arch.regs[VCPU_REGS_RCX];
+ 	u64 data = (vcpu->arch.regs[VCPU_REGS_RAX] & -1u)
+@@ -5699,12 +5737,16 @@ static int handle_wrmsr(struct kvm_vcpu *vcpu)
+ 
+ static int handle_tpr_below_threshold(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_TPR_BELOW_THRESHOLD] += 1;
+ 	kvm_make_request(KVM_REQ_EVENT, vcpu);
+ 	return 1;
+ }
+ 
+ static int handle_interrupt_window(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_NMI_WINDOW] += 1;
+ 	u32 cpu_based_vm_exec_control;
+ 
+ 	/* clear pending irq */
+@@ -5720,22 +5762,30 @@ static int handle_interrupt_window(struct kvm_vcpu *vcpu)
+ 
+ static int handle_halt(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_HLT] += 1;
+ 	return kvm_emulate_halt(vcpu);
+ }
+ 
+ static int handle_vmcall(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMCALL] += 1;
+ 	kvm_emulate_hypercall(vcpu);
+ 	return 1;
+ }
+ 
+ static int handle_invd(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_INVALID_STATE] += 1;
+ 	return emulate_instruction(vcpu, 0) == EMULATE_DONE;
+ }
+ 
+ static int handle_invlpg(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_INVLPG] += 1;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 
+ 	kvm_mmu_invlpg(vcpu, exit_qualification);
+@@ -5745,6 +5795,8 @@ static int handle_invlpg(struct kvm_vcpu *vcpu)
+ 
+ static int handle_rdpmc(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_RDPMC] += 1;
+ 	int err;
+ 
+ 	err = kvm_rdpmc(vcpu);
+@@ -5755,12 +5807,16 @@ static int handle_rdpmc(struct kvm_vcpu *vcpu)
+ 
+ static int handle_wbinvd(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_WBINVD] += 1;
+ 	kvm_emulate_wbinvd(vcpu);
+ 	return 1;
+ }
+ 
+ static int handle_xsetbv(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_XSETBV] += 1;
+ 	u64 new_bv = kvm_read_edx_eax(vcpu);
+ 	u32 index = kvm_register_read(vcpu, VCPU_REGS_RCX);
+ 
+@@ -5771,6 +5827,8 @@ static int handle_xsetbv(struct kvm_vcpu *vcpu)
+ 
+ static int handle_xsaves(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_XSAVES] += 1;
+ 	skip_emulated_instruction(vcpu);
+ 	WARN(1, "this should never happen\n");
+ 	return 1;
+@@ -5778,6 +5836,8 @@ static int handle_xsaves(struct kvm_vcpu *vcpu)
+ 
+ static int handle_xrstors(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_XRSTORS] += 1;
+ 	skip_emulated_instruction(vcpu);
+ 	WARN(1, "this should never happen\n");
+ 	return 1;
+@@ -5785,6 +5845,8 @@ static int handle_xrstors(struct kvm_vcpu *vcpu)
+ 
+ static int handle_apic_access(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_APIC_ACCESS] += 1;
+ 	if (likely(fasteoi)) {
+ 		unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 		int access_type, offset;
+@@ -5808,6 +5870,8 @@ static int handle_apic_access(struct kvm_vcpu *vcpu)
+ 
+ static int handle_apic_eoi_induced(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_EOI_INDUCED] += 1;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 	int vector = exit_qualification & 0xff;
+ 
+@@ -5818,6 +5882,8 @@ static int handle_apic_eoi_induced(struct kvm_vcpu *vcpu)
+ 
+ static int handle_apic_write(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_APIC_WRITE] += 1;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 	u32 offset = exit_qualification & 0xfff;
+ 
+@@ -5828,6 +5894,8 @@ static int handle_apic_write(struct kvm_vcpu *vcpu)
+ 
+ static int handle_task_switch(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_TASK_SWITCH] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	unsigned long exit_qualification;
+ 	bool has_error_code = false;
+@@ -5893,6 +5961,8 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
+ 
+ static int handle_ept_violation(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_EPT_VIOLATION] += 1;
+ 	unsigned long exit_qualification;
+ 	gpa_t gpa;
+ 	u32 error_code;
+@@ -5941,6 +6011,8 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
+ 
+ static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_EPT_MISCONFIG] += 1;
+ 	int ret;
+ 	gpa_t gpa;
+ 
+@@ -5973,6 +6045,8 @@ static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
+ 
+ static int handle_nmi_window(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_NMI_WINDOW] += 1;
+ 	u32 cpu_based_vm_exec_control;
+ 
+ 	/* clear pending NMI */
+@@ -6353,6 +6427,8 @@ static __exit void hardware_unsetup(void)
+  */
+ static int handle_pause(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_PAUSE_INSTRUCTION] += 1;
+ 	if (ple_gap)
+ 		grow_ple_window(vcpu);
+ 
+@@ -6370,17 +6446,23 @@ static int handle_nop(struct kvm_vcpu *vcpu)
+ 
+ static int handle_mwait(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_MWAIT_INSTRUCTION] += 1;
+ 	printk_once(KERN_WARNING "kvm: MWAIT instruction emulated as NOP!\n");
+ 	return handle_nop(vcpu);
+ }
+ 
+ static int handle_monitor_trap(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_MONITOR_TRAP_FLAG] += 1;
+ 	return 1;
+ }
+ 
+ static int handle_monitor(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_MONITOR_INSTRUCTION] += 1;
+ 	printk_once(KERN_WARNING "kvm: MONITOR instruction emulated as NOP!\n");
+ 	return handle_nop(vcpu);
+ }
+@@ -6735,6 +6817,8 @@ static int nested_vmx_check_vmptr(struct kvm_vcpu *vcpu, int exit_reason,
+  */
+ static int handle_vmon(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMON] += 1;
+ 	struct kvm_segment cs;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	struct vmcs *shadow_vmcs;
+@@ -6895,6 +6979,8 @@ static void free_nested(struct vcpu_vmx *vmx)
+ /* Emulate the VMXOFF instruction */
+ static int handle_vmoff(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMOFF] += 1;
+ 	if (!nested_vmx_check_permission(vcpu))
+ 		return 1;
+ 	free_nested(to_vmx(vcpu));
+@@ -6906,6 +6992,8 @@ static int handle_vmoff(struct kvm_vcpu *vcpu)
+ /* Emulate the VMCLEAR instruction */
+ static int handle_vmclear(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMCLEAR] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	gpa_t vmptr;
+ 	struct vmcs12 *vmcs12;
+@@ -6949,12 +7037,16 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch);
+ /* Emulate the VMLAUNCH instruction */
+ static int handle_vmlaunch(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMLAUNCH] += 1;
+ 	return nested_vmx_run(vcpu, true);
+ }
+ 
+ /* Emulate the VMRESUME instruction */
+ static int handle_vmresume(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMRESUME] += 1;
+ 
+ 	return nested_vmx_run(vcpu, false);
+ }
+@@ -7147,6 +7239,8 @@ static int nested_vmx_check_vmcs12(struct kvm_vcpu *vcpu)
+ 
+ static int handle_vmread(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMREAD] += 1;
+ 	unsigned long field;
+ 	u64 field_value;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+@@ -7190,6 +7284,8 @@ static int handle_vmread(struct kvm_vcpu *vcpu)
+ 
+ static int handle_vmwrite(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMWRITE] += 1;
+ 	unsigned long field;
+ 	gva_t gva;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+@@ -7244,6 +7340,8 @@ static int handle_vmwrite(struct kvm_vcpu *vcpu)
+ /* Emulate the VMPTRLD instruction */
+ static int handle_vmptrld(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMPTRLD] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	gpa_t vmptr;
+ 
+@@ -7293,6 +7391,8 @@ static int handle_vmptrld(struct kvm_vcpu *vcpu)
+ /* Emulate the VMPTRST instruction */
+ static int handle_vmptrst(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_VMPTRST] += 1;
+ 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 	u32 vmx_instruction_info = vmcs_read32(VMX_INSTRUCTION_INFO);
+ 	gva_t vmcs_gva;
+@@ -7319,6 +7419,8 @@ static int handle_vmptrst(struct kvm_vcpu *vcpu)
+ /* Emulate the INVEPT instruction */
+ static int handle_invept(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_INVEPT] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	u32 vmx_instruction_info, types;
+ 	unsigned long type;
+@@ -7385,6 +7487,8 @@ static int handle_invept(struct kvm_vcpu *vcpu)
+ 
+ static int handle_invvpid(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_INVVPID] += 1;
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	u32 vmx_instruction_info;
+ 	unsigned long type, types;
+@@ -7448,6 +7552,8 @@ static int handle_invvpid(struct kvm_vcpu *vcpu)
+ 
+ static int handle_pml_full(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_PML_FULL] += 1;
+ 	unsigned long exit_qualification;
+ 
+ 	trace_kvm_pml_full(vcpu->vcpu_id);
+@@ -7473,6 +7579,8 @@ static int handle_pml_full(struct kvm_vcpu *vcpu)
+ 
+ static int handle_pcommit(struct kvm_vcpu *vcpu)
+ {
++	vmx_exit_init_start_time();
++	vmx_exit_counter[vcpu->cpu][EXIT_REASON_PCOMMIT] += 1;
+ 	/* we never catch pcommit instruct for L1 guest. */
+ 	WARN_ON(1);
+ 	return 1;
+@@ -9070,6 +9178,8 @@ static void vmx_inject_page_fault_nested(struct kvm_vcpu *vcpu,
+ 
+ 	WARN_ON(!is_guest_mode(vcpu));
+ 
++	vmx_event[vcpu->cpu][EVENT_PFD] += 1;
++
+ 	if (nested_vmx_is_page_fault_vmexit(vmcs12, fault->error_code))
+ 		nested_vmx_vmexit(vcpu, to_vmx(vcpu)->exit_reason,
+ 				  vmcs_read32(VM_EXIT_INTR_INFO),
+@@ -9720,7 +9830,7 @@ static void prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12)
+ 	/* vmcs12's VM_ENTRY_LOAD_IA32_EFER and VM_ENTRY_IA32E_MODE are
+ 	 * emulated by vmx_set_efer(), below.
+ 	 */
+-	vm_entry_controls_init(vmx, 
++	vm_entry_controls_init(vmx,
+ 		(vmcs12->vm_entry_controls & ~VM_ENTRY_LOAD_IA32_EFER &
+ 			~VM_ENTRY_IA32E_MODE) |
+ 		(vmcs_config.vmentry_ctrl & ~VM_ENTRY_IA32E_MODE));
+@@ -10951,5 +11061,9 @@ static void __exit vmx_exit(void)
+ 	kvm_exit();
+ }
+ 
++EXPORT_SYMBOL(vmx_exit_counter);
++EXPORT_SYMBOL(vmx_exit_start_time);
++EXPORT_SYMBOL(vmx_event);
++
+ module_init(vmx_init)
+ module_exit(vmx_exit)
